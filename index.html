@@ -31,6 +31,8 @@ input{flex:1;min-width:0;font:inherit;padding:12px;border-radius:12px;border:1px
 .res b{font-size:17px}
 .tag{font-size:12px;color:var(--ac);font-weight:700}
 .hist{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;background:transparent;color:var(--tx);font-weight:500;padding:10px 0;border-radius:0;border-top:1px solid var(--bd);min-height:44px}
+#out h2{font-size:18px;margin:0 0 4px}
+.pimg{width:64px;height:64px;object-fit:contain;border-radius:8px;background:#fff;float:right;margin-left:10px}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -38,14 +40,14 @@ input{flex:1;min-width:0;font:inherit;padding:12px;border-radius:12px;border:1px
 <main>
 <h1>🛒 Дешевле в Уфе</h1>
 <div class="mut">Сканируйте штрихкод — найдём, где товар дешевле</div>
-<div class="demo">Прототип: цены демонстрационные. Реальные цены подключаются через сервер (см. getPrices в коде).</div>
+<div class="demo">Названия товаров берутся из открытых баз (Open Food Facts и др.). Цены пока демонстрационные.</div>
 
 <div class="card">
 <div id="reader" hidden></div>
 <button id="scan">📷 Сканировать штрихкод</button>
 <button id="stop" class="sec" hidden style="margin-top:8px">Остановить камеру</button>
 <div class="row"><input id="ean" inputmode="numeric" placeholder="Или введите штрихкод" aria-label="Штрихкод"><button id="go">Найти</button></div>
-<div class="mut" style="margin-top:8px">Для проверки без камеры: <a href="#" data-d="4600000000017">молоко</a> · <a href="#" data-d="4600000000024">хлеб</a> · <a href="#" data-d="4600000000031">кофе</a></div>
+<div class="mut" style="margin-top:8px">Для проверки без камеры: <a href="#" data-d="4600000000017">молоко</a> · <a href="#" data-d="4600000000024">хлеб</a> · <a href="#" data-d="4600000000031">кофе</a> · <a href="#" data-d="3017620422003">Nutella (реальный код)</a></div>
 <div id="msg" class="mut" role="status" style="margin-top:8px"></div>
 </div>
 
@@ -77,27 +79,61 @@ let sc=null;
 const hash=s=>{let x=0;for(const c of s)x=(x*31+c.charCodeAt(0))>>>0;return x};
 const rub=v=>v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽';
 const say=t=>{$('#msg').textContent=t||''};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Открытые базы товаров: еда, косметика, прочее (одинаковый API)
+const DBS=['world.openfoodfacts.org','world.openbeautyfacts.org','world.openproductsfacts.org'];
+async function fetchDb(host,ean){
+ const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),8000);
+ try{
+  const r=await fetch('https://'+host+'/api/v2/product/'+ean+'.json?fields=product_name,product_name_ru,generic_name,brands,quantity,image_front_small_url',{signal:ctl.signal});
+  const j=await r.json();
+  if(j.status!==1||!j.product)return null;
+  const p=j.product,n=(p.product_name_ru||p.product_name||p.generic_name||'').trim();
+  if(!n)return null;
+  return{n:n,brand:(p.brands||'').split(',')[0].trim(),qty:(p.quantity||'').trim(),img:p.image_front_small_url||''};
+ }catch(e){return undefined}finally{clearTimeout(t)}
+}
+// Возвращает {n,brand,qty,img} | null (не найден) | {err:1} (нет связи)
+async function lookupName(ean){
+ if(CAT[ean])return{n:CAT[ean].n,brand:'',qty:'',img:''};
+ const cache=ls.get('names',{});
+ if(cache[ean])return cache[ean];
+ let err=false;
+ for(const h of DBS){
+  const r=await fetchDb(h,ean);
+  if(r){
+   const ks=Object.keys(cache);if(ks.length>100)ks.slice(0,50).forEach(k=>delete cache[k]);
+   cache[ean]=r;ls.set('names',cache);return r;
+  }
+  if(r===undefined)err=true;
+ }
+ return err?{err:1}:null;
+}
 
 // Здесь позже будет запрос к вашему серверу: fetch('/api/prices?ean='+ean)
 async function getPrices(ean){
- const p=CAT[ean]||{n:'Товар (код '+ean+')',p:60+hash(ean)%240};
- return{name:p.n,prices:STORES.filter(s=>sel.has(s.id)).map(s=>({s:s.n,v:Math.round(p.p*s.k*(0.92+(hash(ean+s.id)%17)/100)*100)/100}))};
+ const p=CAT[ean]||{p:60+hash(ean)%240};
+ return{prices:STORES.filter(s=>sel.has(s.id)).map(s=>({s:s.n,v:Math.round(p.p*s.k*(0.92+(hash(ean+s.id)%17)/100)*100)/100}))};
 }
 
 async function look(raw){
  const ean=(raw||'').replace(/\D/g,'');
  if(ean.length<8||ean.length>14)return say('Штрихкод — от 8 до 14 цифр');
  if(!sel.size)return say('Выберите хотя бы один магазин');
- say('Ищем…');
+ say('Ищем товар…');
+ const info=await lookupName(ean);
  const r=await getPrices(ean);
+ const found=info&&info.n;
+ const title=found?info.n:'Товар не найден в базе';
+ const sub=found?[info.brand,info.qty].filter(Boolean).join(' · '):(info&&info.err?'Не удалось связаться с базой товаров — проверьте интернет':'Этого штрихкода нет в открытых базах, цены ниже условные');
  r.prices.sort((a,b)=>a.v-b.v);
  const lo=r.prices[0],hi=r.prices[r.prices.length-1],save=hi.v-lo.v;
  $('#out').hidden=false;
- $('#out').innerHTML='<h2>'+r.name+'</h2><div class="mut">Штрихкод '+ean+'</div>'
+ $('#out').innerHTML='<div style="display:flow-root">'+(found&&info.img?'<img class="pimg" src="'+esc(info.img)+'" alt="" loading="lazy">':'')+'<h2>'+esc(title)+'</h2><div class="mut">'+(sub?esc(sub)+' · ':'')+'Штрихкод '+ean+'</div></div>'
   +(r.prices.length>1?'<p style="margin:8px 0"><b>Выгоднее всего: '+lo.s+'</b> — экономия до '+rub(save)+' ('+Math.round(save/hi.v*100)+'%)</p>':'')
   +r.prices.map((x,i)=>'<div class="res'+(i?'':' best')+'"><span>'+x.s+(i?'':'<br><span class="tag">ДЕШЕВЛЕ ВСЕГО</span>')+'</span><span style="text-align:right"><b>'+rub(x.v)+'</b>'+(i?'<br><span class="mut">+'+rub(x.v-lo.v)+'</span>':'')+'</span></div>').join('');
  say('');
- hist=[{e:ean,n:r.name,v:lo.v,s:lo.s}].concat(hist.filter(x=>x.e!==ean)).slice(0,8);
+ hist=[{e:ean,n:title,v:lo.v,s:lo.s}].concat(hist.filter(x=>x.e!==ean)).slice(0,8);
  ls.set('hist',hist);drawHist();
  $('#out').scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -124,7 +160,7 @@ function drawStores(){
 }
 function drawHist(){
  $('#hw').hidden=!hist.length;
- $('#hist').innerHTML=hist.map(x=>'<button class="hist" data-e="'+x.e+'"><span>'+x.n+'</span><span class="mut">'+rub(x.v)+'</span></button>').join('');
+ $('#hist').innerHTML=hist.map(x=>'<button class="hist" data-e="'+x.e+'"><span>'+esc(x.n)+'</span><span class="mut">'+rub(x.v)+'</span></button>').join('');
 }
 
 $('#scan').onclick=startScan;
