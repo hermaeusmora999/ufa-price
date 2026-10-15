@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Дешевле в Уфе — сканер цен</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--tx:#14171c;--mut:#667085;--ac:#15803d;--bd:#e2e6ea;--wb:#fef3c7;--wt:#92400e;--best:#dcfce7;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1214;--card:#1a1e22;--tx:#eef1f4;--mut:#9aa4af;--ac:#22c55e;--bd:#2c333a;--wb:#3a2f0b;--wt:#fcd34d;--best:#12351f}}
+:root[data-theme="dark"]{--bg:#0f1214;--card:#1a1e22;--tx:#eef1f4;--mut:#9aa4af;--ac:#22c55e;--bd:#2c333a;--wb:#3a2f0b;--wt:#fcd34d;--best:#12351f}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 2px}h2{font-size:15px;margin:0 0 10px}
+.mut{color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin:12px 0}
+.demo{background:var(--wb);color:var(--wt);border-radius:10px;padding:8px 12px;font-size:13px;margin:10px 0}
+button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:14px 16px;background:var(--ac);color:#fff;width:100%;min-height:48px}
+button.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+.row{display:flex;gap:8px;margin-top:10px}.row button{width:auto}
+input{flex:1;min-width:0;font:inherit;padding:12px;border-radius:12px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{width:auto;min-height:40px;padding:8px 14px;border-radius:999px;font-size:14px;font-weight:500;background:transparent;color:var(--mut);border:1px solid var(--bd)}
+.chip[aria-pressed=true]{background:var(--ac);color:#fff;border-color:var(--ac)}
+#reader{border-radius:12px;overflow:hidden;margin-bottom:10px}
+.res{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;border-radius:10px}
+.res+.res{border-top:1px solid var(--bd)}
+.res.best{background:var(--best);border:0}
+.res b{font-size:17px}
+.tag{font-size:12px;color:var(--ac);font-weight:700}
+.hist{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;background:transparent;color:var(--tx);font-weight:500;padding:10px 0;border-radius:0;border-top:1px solid var(--bd);min-height:44px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1>🛒 Дешевле в Уфе</h1>
+<div class="mut">Сканируйте штрихкод — найдём, где товар дешевле</div>
+<div class="demo">Прототип: цены демонстрационные. Реальные цены подключаются через сервер (см. getPrices в коде).</div>
+
+<div class="card">
+<div id="reader" hidden></div>
+<button id="scan">📷 Сканировать штрихкод</button>
+<button id="stop" class="sec" hidden style="margin-top:8px">Остановить камеру</button>
+<div class="row"><input id="ean" inputmode="numeric" placeholder="Или введите штрихкод" aria-label="Штрихкод"><button id="go">Найти</button></div>
+<div class="mut" style="margin-top:8px">Для проверки без камеры: <a href="#" data-d="4600000000017">молоко</a> · <a href="#" data-d="4600000000024">хлеб</a> · <a href="#" data-d="4600000000031">кофе</a></div>
+<div id="msg" class="mut" role="status" style="margin-top:8px"></div>
+</div>
+
+<div id="out" class="card" hidden></div>
+
+<div class="card">
+<h2>Магазины Уфы для сравнения</h2>
+<div id="stores" class="chips"></div>
+<div class="mut" style="margin-top:8px">Список составлен вручную — проверьте и дополните в массиве STORES.</div>
+</div>
+
+<div id="hw" class="card" hidden><h2>Недавние сканы</h2><div id="hist"></div></div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+// k — демо-коэффициент цены сети
+const STORES=[
+ {id:'5ka',n:'Пятёрочка',k:1.00},{id:'mgn',n:'Магнит',k:1.02},{id:'len',n:'Лента',k:0.97},
+ {id:'auc',n:'Ашан',k:0.99},{id:'kb',n:'Красное&Белое',k:1.05},{id:'bri',n:'Бристоль',k:1.04},
+ {id:'fix',n:'Fix Price',k:0.95},{id:'svf',n:'Светофор',k:0.93}
+];
+const CAT={'4600000000017':{n:'Молоко 3,2%, 900 мл',p:82},'4600000000024':{n:'Хлеб белый, 400 г',p:48},'4600000000031':{n:'Кофе растворимый, 190 г',p:560}};
+const ls={get(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let sel=new Set(ls.get('stores',STORES.map(s=>s.id)));
+let hist=ls.get('hist',[]);
+let sc=null;
+const hash=s=>{let x=0;for(const c of s)x=(x*31+c.charCodeAt(0))>>>0;return x};
+const rub=v=>v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽';
+const say=t=>{$('#msg').textContent=t||''};
+
+// Здесь позже будет запрос к вашему серверу: fetch('/api/prices?ean='+ean)
+async function getPrices(ean){
+ const p=CAT[ean]||{n:'Товар (код '+ean+')',p:60+hash(ean)%240};
+ return{name:p.n,prices:STORES.filter(s=>sel.has(s.id)).map(s=>({s:s.n,v:Math.round(p.p*s.k*(0.92+(hash(ean+s.id)%17)/100)*100)/100}))};
+}
+
+async function look(raw){
+ const ean=(raw||'').replace(/\D/g,'');
+ if(ean.length<8||ean.length>14)return say('Штрихкод — от 8 до 14 цифр');
+ if(!sel.size)return say('Выберите хотя бы один магазин');
+ say('Ищем…');
+ const r=await getPrices(ean);
+ r.prices.sort((a,b)=>a.v-b.v);
+ const lo=r.prices[0],hi=r.prices[r.prices.length-1],save=hi.v-lo.v;
+ $('#out').hidden=false;
+ $('#out').innerHTML='<h2>'+r.name+'</h2><div class="mut">Штрихкод '+ean+'</div>'
+  +(r.prices.length>1?'<p style="margin:8px 0"><b>Выгоднее всего: '+lo.s+'</b> — экономия до '+rub(save)+' ('+Math.round(save/hi.v*100)+'%)</p>':'')
+  +r.prices.map((x,i)=>'<div class="res'+(i?'':' best')+'"><span>'+x.s+(i?'':'<br><span class="tag">ДЕШЕВЛЕ ВСЕГО</span>')+'</span><span style="text-align:right"><b>'+rub(x.v)+'</b>'+(i?'<br><span class="mut">+'+rub(x.v-lo.v)+'</span>':'')+'</span></div>').join('');
+ say('');
+ hist=[{e:ean,n:r.name,v:lo.v,s:lo.s}].concat(hist.filter(x=>x.e!==ean)).slice(0,8);
+ ls.set('hist',hist);drawHist();
+ $('#out').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+async function startScan(){
+ if(!window.Html5Qrcode)return say('Сканер не загрузился — введите код вручную');
+ $('#reader').hidden=false;$('#stop').hidden=false;say('Наведите камеру на штрихкод');
+ try{
+  const F=Html5QrcodeSupportedFormats;
+  sc=new Html5Qrcode('reader',{formatsToSupport:[F.EAN_13,F.EAN_8,F.UPC_A,F.UPC_E],experimentalFeatures:{useBarCodeDetector:true},verbose:false});
+  await sc.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:130}},async t=>{await stopScan();look(t)},()=>{});
+ }catch(e){
+  $('#reader').hidden=true;$('#stop').hidden=true;
+  say('Нет доступа к камере — разрешите её в браузере или введите код вручную');
+ }
+}
+async function stopScan(){
+ try{if(sc){await sc.stop();sc.clear()}}catch(e){}
+ sc=null;$('#reader').hidden=true;$('#stop').hidden=true;
+}
+
+function drawStores(){
+ $('#stores').innerHTML=STORES.map(s=>'<button class="chip" data-s="'+s.id+'" aria-pressed="'+sel.has(s.id)+'">'+s.n+'</button>').join('');
+}
+function drawHist(){
+ $('#hw').hidden=!hist.length;
+ $('#hist').innerHTML=hist.map(x=>'<button class="hist" data-e="'+x.e+'"><span>'+x.n+'</span><span class="mut">'+rub(x.v)+'</span></button>').join('');
+}
+
+$('#scan').onclick=startScan;
+$('#stop').onclick=stopScan;
+$('#go').onclick=()=>look($('#ean').value);
+$('#ean').onkeydown=e=>{if(e.key==='Enter')look(e.target.value)};
+document.addEventListener('click',e=>{
+ const a=e.target.closest('[data-d]');if(a){e.preventDefault();$('#ean').value=a.dataset.d;look(a.dataset.d)}
+ const c=e.target.closest('[data-s]');if(c){const id=c.dataset.s;sel.has(id)?sel.delete(id):sel.add(id);ls.set('stores',[...sel]);drawStores()}
+ const h=e.target.closest('[data-e]');if(h){$('#ean').value=h.dataset.e;look(h.dataset.e)}
+});
+drawStores();drawHist();
+</script>
+</body>
+</html>
